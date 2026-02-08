@@ -13,44 +13,42 @@ export default function HomePage() {
     const checkAndRedirect = async () => {
       if (redirectingRef.current) return
       
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
+      try {
+        const { data: { user }, error: authError } = await Promise.race([
+          supabase.auth.getUser(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Auth check timeout')), 5000))
+        ])
+        
+        if (authError || !user) {
+          return
+        }
+        
         redirectingRef.current = true
         
-        // Wait a bit for profile to be created (for new signups)
-        await new Promise(resolve => setTimeout(resolve, 500))
-        
-        // Check user role and redirect accordingly
-        const { data } = await supabase
+        // Check user role with timeout
+        const profilePromise = supabase
           .from('profiles')
           .select('role')
           .eq('id', user.id)
           .single()
         
+        const { data, error: profileError } = await Promise.race([
+          profilePromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 3000))
+        ]).catch(() => ({ data: null, error: { message: 'Timeout' } }))
+        
         if (data?.role === 'admin') {
           router.replace('/admin')
         } else if (data?.role === 'user') {
           router.replace('/dashboard')
-        }
-        // If no profile yet, wait a bit more and try again
-        else {
-          setTimeout(async () => {
-            const { data: retryData } = await supabase
-              .from('profiles')
-              .select('role')
-              .eq('id', user.id)
-              .single()
-            
-            if (retryData?.role === 'admin') {
-              router.replace('/admin')
-            } else if (retryData?.role === 'user') {
-              router.replace('/dashboard')
-            }
-            redirectingRef.current = false
-          }, 1000)
-          return
+        } else {
+          // If no profile, redirect to dashboard as default (profile might be created by trigger)
+          router.replace('/dashboard')
         }
         
+        redirectingRef.current = false
+      } catch (err) {
+        console.error('Redirect check error:', err)
         redirectingRef.current = false
       }
     }
@@ -67,7 +65,7 @@ export default function HomePage() {
     })
 
     return () => subscription.unsubscribe()
-  }, [router])
+  }, []) // Remove router dependency to prevent re-runs
 
   // Always show login/signup page as the landing page
   return <AuthLanding />

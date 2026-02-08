@@ -37,43 +37,24 @@ export default function Admin() {
       
       setUser(user)
       
-      // Try to get profile with retry logic
-      let profileData = null
-      let attempts = 0
-      const maxAttempts = 3
+      // Try to get profile with timeout (single attempt)
+      const profilePromise = supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
       
-      while (attempts < maxAttempts && !profileData) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .single()
-        
-        if (error) {
-          console.error('Profile fetch error:', error)
-          if (attempts < maxAttempts - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500))
-            attempts++
-            continue
-          }
-        } else {
-          profileData = data
-          break
-        }
-      }
+      const { data: profileData, error: profileError } = await Promise.race([
+        profilePromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 3000))
+      ]).catch(() => ({ data: null, error: { message: 'Timeout' } }))
       
-      console.log('Admin page - User ID:', user.id)
-      console.log('Admin page - Profile data:', profileData)
-      console.log('Admin page - Role:', profileData?.role)
-      
-      if (profileData && profileData.role === 'admin') {
-        console.log('✅ Admin access granted')
+      if (profileData?.role === 'admin') {
         setUserRole('admin')
         setLoading(false)
         loadCategories()
         loadQuestions()
       } else {
-        console.log('❌ Not admin, redirecting to dashboard. Role:', profileData?.role || 'not found')
         router.replace('/dashboard')
       }
     }

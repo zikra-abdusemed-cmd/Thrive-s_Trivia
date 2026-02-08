@@ -70,41 +70,67 @@ export default function Play() {
   const loadPlayedCategories = async () => {
     if (!user) return
     
-    // Get all categories user has played (from scores table)
-    const { data: playedScores } = await supabase
-      .from('scores')
-      .select('category_id')
-      .eq('user_id', user.id)
-      .not('category_id', 'is', null)
-    
-    const playedCategoryIds = new Set(
-      (playedScores || []).map(score => score.category_id)
-    )
-    
-    // Filter out played categories
-    const { data: allCategories } = await supabase
-      .from('categories')
-      .select('*')
-    
-    if (allCategories) {
-      const available = allCategories.filter(
-        cat => !playedCategoryIds.has(cat.id)
+    try {
+      // Get all categories user has played (from scores table) with timeout
+      const scoresPromise = supabase
+        .from('scores')
+        .select('category_id')
+        .eq('user_id', user.id)
+        .not('category_id', 'is', null)
+      
+      const { data: playedScores } = await Promise.race([
+        scoresPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ]).catch(() => ({ data: [] }))
+      
+      const playedCategoryIds = new Set(
+        (playedScores?.data || []).map(score => score.category_id)
       )
-      setAvailableCategories(available)
+      
+      // Filter out played categories with timeout
+      const categoriesPromise = supabase
+        .from('categories')
+        .select('*')
+      
+      const { data: allCategories } = await Promise.race([
+        categoriesPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ]).catch(() => ({ data: [] }))
+      
+      if (allCategories?.data) {
+        const available = allCategories.data.filter(
+          cat => !playedCategoryIds.has(cat.id)
+        )
+        setAvailableCategories(available)
+      }
+    } catch (err) {
+      console.error('Error loading played categories:', err)
+      // On error, show all categories
+      const { data: allCategories } = await supabase.from('categories').select('*')
+      if (allCategories) {
+        setAvailableCategories(allCategories)
+      }
     }
   }
 
   useEffect(() => {
     if (!user) return
     
-    // Load all categories
-    supabase.from('categories').select('*')
+    // Load all categories with timeout
+    Promise.race([
+      supabase.from('categories').select('*'),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+    ])
       .then(({ data }) => {
         setCategories(data || [])
+      })
+      .catch(() => {
+        setCategories([])
       })
     
     // Load categories user has already played
     loadPlayedCategories()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
   useEffect(() => {
