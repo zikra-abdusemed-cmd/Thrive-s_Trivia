@@ -1,0 +1,514 @@
+'use client'
+import Image from 'next/image'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { supabase } from '../../lib/supabase'
+import QuestionCard from '../../components/QuestionCard'
+
+export default function Play() {
+  const router = useRouter()
+  const [categories, setCategories] = useState([])
+  const [availableCategories, setAvailableCategories] = useState([])
+  const [category, setCategory] = useState(null)
+  const [questions, setQuestions] = useState([])
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
+  const [score, setScore] = useState(0)
+  const [time, setTime] = useState(30)
+  const [done, setDone] = useState(false)
+  const [user, setUser] = useState(null)
+  const [userRole, setUserRole] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [answered, setAnswered] = useState(false)
+
+  useEffect(() => {
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) {
+        router.push('/')
+        return
+      }
+      setUser(user)
+      
+      // Check user role - block admins
+      const { data } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', user.id)
+        .single()
+      
+      if (data) {
+        setUserRole(data.role)
+        // Redirect admins to admin page
+        if (data.role === 'admin') {
+          router.push('/admin')
+          return
+        }
+      }
+      
+      setLoading(false)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!session?.user) {
+        router.replace('/')
+      } else {
+        setUser(session.user)
+        const { data } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', session.user.id)
+          .single()
+        
+        if (data?.role === 'admin') {
+          router.push('/admin')
+        }
+      }
+    })
+
+    return () => subscription.unsubscribe()
+  }, [router])
+
+  const loadPlayedCategories = async () => {
+    if (!user) return
+    
+    // Get all categories user has played (from scores table)
+    const { data: playedScores } = await supabase
+      .from('scores')
+      .select('category_id')
+      .eq('user_id', user.id)
+      .not('category_id', 'is', null)
+    
+    const playedCategoryIds = new Set(
+      (playedScores || []).map(score => score.category_id)
+    )
+    
+    // Filter out played categories
+    const { data: allCategories } = await supabase
+      .from('categories')
+      .select('*')
+    
+    if (allCategories) {
+      const available = allCategories.filter(
+        cat => !playedCategoryIds.has(cat.id)
+      )
+      setAvailableCategories(available)
+    }
+  }
+
+  useEffect(() => {
+    if (!user) return
+    
+    // Load all categories
+    supabase.from('categories').select('*')
+      .then(({ data }) => {
+        setCategories(data || [])
+      })
+    
+    // Load categories user has already played
+    loadPlayedCategories()
+  }, [user])
+
+  useEffect(() => {
+    if (!category) return
+    supabase.from('questions')
+      .select('*')
+      .eq('category_id', category)
+      .then(({ data }) => {
+        setQuestions(data.sort(() => 0.5 - Math.random()).slice(0, 5))
+      })
+  }, [category])
+
+  // Reset timer when question changes
+  useEffect(() => {
+    if (questions.length > 0 && currentQuestionIndex < questions.length && !done) {
+      setTime(30)
+      setAnswered(false)
+    }
+  }, [currentQuestionIndex, questions.length, done])
+
+  // Timer countdown
+  useEffect(() => {
+    if (done || questions.length === 0 || currentQuestionIndex >= questions.length || answered) return
+    
+    if (time <= 0) {
+      // Time's up for this question, move to next
+      setAnswered(true)
+      setTimeout(() => {
+        if (currentQuestionIndex < questions.length - 1) {
+          setCurrentQuestionIndex(i => i + 1)
+        } else {
+          setDone(true)
+        }
+      }, 1000)
+      return
+    }
+    
+    const t = setInterval(() => {
+      setTime(prev => {
+        if (prev <= 1) {
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    
+    return () => clearInterval(t)
+  }, [time, done, currentQuestionIndex, questions.length, answered])
+
+  useEffect(() => {
+    if (done && user && questions.length > 0 && category) {
+      // Save score to database with category_id
+      const saveScore = async () => {
+        try {
+          const { error } = await supabase.from('scores').insert({
+            user_id: user.id,
+            user_email: user.email,
+            score: score,
+            total_questions: questions.length,
+            category_id: category
+          })
+          if (error) {
+            console.error('Error saving score:', error)
+          } else {
+            // Reload available categories after saving score
+            loadPlayedCategories()
+          }
+        } catch (err) {
+          console.error('Error saving score:', err)
+        }
+      }
+      saveScore()
+    }
+  }, [done, user, score, questions.length, category])
+
+  const answer = (q, opt) => {
+    if (answered) return // Prevent multiple answers
+    
+    setAnswered(true)
+    if (q.correct === opt) {
+      setScore(s => s + 1)
+    }
+    
+    // Move to next question after a short delay
+    setTimeout(() => {
+      handleNextQuestion()
+    }, 1500)
+  }
+
+  const handleNextQuestion = () => {
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex(i => i + 1)
+    } else {
+      // All questions answered
+      setDone(true)
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="loading-container">
+        <div className="loading-spinner">✨</div>
+      </div>
+    )
+  }
+
+  if (!user || userRole === 'admin') return null
+
+  if (done) {
+    return (
+      <>
+        <div className="score-container">
+          <div className="score-card">
+            <h1 className="score-title">Game Over! 🎉</h1>
+            <div className="score-value">{score}</div>
+            <p className="score-label">out of {questions.length}</p>
+            <button className="play-again-btn" onClick={() => window.location.reload()}>
+              Play Again ✨
+            </button>
+          </div>
+        </div>
+        <style jsx>{`
+          .score-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: calc(100vh - 200px);
+            padding: 20px;
+          }
+
+          .score-card {
+            background: linear-gradient(135deg, #ffffff 0%, #fce7f3 100%);
+            padding: 60px 40px;
+            border-radius: 30px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(147, 51, 234, 0.2);
+            animation: fadeInScale 0.6s ease-out;
+          }
+
+          @keyframes fadeInScale {
+            from {
+              opacity: 0;
+              transform: scale(0.9);
+            }
+            to {
+              opacity: 1;
+              transform: scale(1);
+            }
+          }
+
+          .score-title {
+            font-size: 2.5rem;
+            font-weight: 800;
+            margin-bottom: 20px;
+            background: linear-gradient(135deg, #9333ea 0%, #ec4899 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+          }
+
+          .score-value {
+            font-size: 5rem;
+            font-weight: 900;
+            color: #9333ea;
+            margin-bottom: 10px;
+          }
+
+          .score-label {
+            font-size: 1.2rem;
+            color: #9333ea;
+            margin-bottom: 30px;
+          }
+
+          .play-again-btn {
+            padding: 16px 32px;
+            background: linear-gradient(135deg, #9333ea 0%, #ec4899 100%);
+            color: #ffffff;
+            border: none;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            box-shadow: 0 4px 12px rgba(147, 51, 234, 0.3);
+          }
+
+          .play-again-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(147, 51, 234, 0.4);
+          }
+        `}</style>
+      </>
+    )
+  }
+
+  return (
+    <>
+      <div className="play-container">
+        
+        <div className="play-header">
+          <div className="timer-box">
+            <span className="timer-label">Time</span>
+            <span className="timer-value">{time}s</span>
+          </div>
+          <div className="score-box">
+            <span className="score-label">Score</span>
+            <span className="score-display">{score}</span>
+          </div>
+        </div>
+
+        {!category && (
+          <div className="categories-section">
+            <h2 className="section-title">Choose a Category</h2>
+            {availableCategories.length === 0 ? (
+              <div className="no-categories-message">
+                <p className="no-categories-text">🎉 Amazing! You've played all available categories!</p>
+                <p className="no-categories-subtext">Check back later for new categories or check your scores on the leaderboard! ✨</p>
+              </div>
+            ) : (
+              <>
+                <p className="categories-count">
+                  {availableCategories.length} {availableCategories.length === 1 ? 'category' : 'categories'} available
+                </p>
+                <div className="categories-grid">
+                  {availableCategories.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => setCategory(c.id)}
+                      className="category-button"
+                    >
+                      {c.name} ✨
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        <div className="questions-section">
+          {questions.length > 0 && currentQuestionIndex < questions.length && (
+            <>
+              <div className="question-progress">
+                Question {currentQuestionIndex + 1} of {questions.length}
+              </div>
+              <QuestionCard 
+                key={questions[currentQuestionIndex].id} 
+                q={questions[currentQuestionIndex]} 
+                answer={answer}
+                answered={answered}
+              />
+            </>
+          )}
+        </div>
+      </div>
+      <style jsx>{`
+        .play-container {
+          max-width: 900px;
+          margin: 0 auto;
+          padding: 20px;
+        }
+
+        .play-logo-container {
+          display: flex;
+          justify-content: center;
+          margin-bottom: 30px;
+        }
+
+        .play-logo {
+          width: 180px;
+          height: auto;
+          object-fit: contain;
+        }
+
+        .play-header {
+          display: flex;
+          justify-content: space-between;
+          gap: 20px;
+          margin-bottom: 30px;
+        }
+
+        .timer-box, .score-box {
+          flex: 1;
+          background-color:#9333ea;
+          padding: 20px;
+          border-radius: 16px;
+          text-align: center;
+          box-shadow: 0 4px 12px rgba(147, 51, 234, 0.3);
+          color: #ffffff;
+        }
+
+        .timer-label, .score-label {
+          display: block;
+          font-size: 0.9rem;
+          font-weight: 600;
+          margin-bottom: 8px;
+          opacity: 0.9;
+        }
+
+        .timer-value, .score-display {
+          display: block;
+          font-size: 2rem;
+          font-weight: 800;
+        }
+
+        .categories-section {
+          margin-bottom: 40px;
+        }
+
+        .section-title {
+          font-size: 1.3rem;
+          font-weight: 800;
+          color: #000;
+          margin-bottom: 24px;
+          text-align: center;
+        }
+
+        .categories-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 16px;
+        }
+
+        .category-button {
+          padding: 20px;
+          background: linear-gradient(135deg, #ffffff 0%, #fce7f3 100%);
+          border: 2px solid #f3e8ff;
+          border-radius: 16px;
+          font-size: 1.1rem;
+          font-weight: 700;
+          color: #9333ea;
+          cursor: pointer;
+          transition: all 0.3s ease;
+          box-shadow: 0 2px 8px rgba(147, 51, 234, 0.1);
+        }
+
+        .category-button:hover {
+          transform: translateY(-4px);
+          border-color: #9333ea;
+          box-shadow: 0 6px 16px rgba(147, 51, 234, 0.2);
+          background: linear-gradient(135deg, #fce7f3 0%, #f3e8ff 100%);
+        }
+
+        .questions-section {
+          margin-top: 30px;
+        }
+
+        .question-progress {
+          text-align: center;
+          font-size: 1.2rem;
+          font-weight: 700;
+          color: #9333ea;
+          margin-bottom: 20px;
+          padding: 12px;
+          background: linear-gradient(135deg, #fce7f3 0%, #f3e8ff 100%);
+          border-radius: 12px;
+        }
+
+        .categories-count {
+          text-align: center;
+          font-size: 1rem;
+          color: #9333ea;
+          margin-bottom: 20px;
+          font-weight: 600;
+        }
+
+        .no-categories-message {
+          text-align: center;
+          padding: 60px 40px;
+          background: linear-gradient(135deg, #ffffff 0%, #fce7f3 100%);
+          border-radius: 20px;
+          box-shadow: 0 4px 16px rgba(147, 51, 234, 0.15);
+        }
+
+        .no-categories-text {
+          font-size: 1.5rem;
+          font-weight: 700;
+          color: #9333ea;
+          margin-bottom: 16px;
+        }
+
+        .no-categories-subtext {
+          font-size: 1.1rem;
+          color: #9333ea;
+          opacity: 0.8;
+        }
+
+        .loading-container {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          min-height: calc(100vh - 200px);
+        }
+
+        .loading-spinner {
+          font-size: 3rem;
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
+    </>
+  )
+}
