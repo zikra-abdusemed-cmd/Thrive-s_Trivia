@@ -43,45 +43,22 @@ export default function AuthLanding() {
       }
 
       if (data.user) {
-        console.log('✅ Login successful, User ID:', data.user.id)
-        console.log('✅ User email:', data.user.email)
+        // Try to get profile with timeout (single attempt)
+        const profilePromise = supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', data.user.id)
+          .single()
         
-        // Wait a moment for profile to be available
-        await new Promise(resolve => setTimeout(resolve, 500))
+        const { data: profileData, error: profileError } = await Promise.race([
+          profilePromise,
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 3000))
+        ]).catch(() => ({ data: null, error: { message: 'Timeout' } }))
         
-        // Try to get profile with retry logic
-        let profileData = null
-        let attempts = 0
-        const maxAttempts = 3
-        
-        while (attempts < maxAttempts && !profileData) {
-          const { data: profile, error: profileError } = await supabase
-            .from('profiles')
-            .select('role')
-            .eq('id', data.user.id)
-            .single()
-          
-          if (profileError) {
-            console.error(`Profile fetch attempt ${attempts + 1} failed:`, profileError)
-            if (attempts < maxAttempts - 1) {
-              await new Promise(resolve => setTimeout(resolve, 500))
-              attempts++
-              continue
-            }
-          } else {
-            profileData = profile
-            break
-          }
-        }
-        
-        console.log('📋 Profile data:', profileData)
-        console.log('👤 User role:', profileData?.role)
-        
-        if (profileData && profileData.role === 'admin') {
-          console.log('🔑 Admin detected, redirecting to /admin')
+        // Default to dashboard if profile not found (profile might be created by trigger)
+        if (profileData?.role === 'admin') {
           router.replace('/admin')
         } else {
-          console.log('👤 Regular user detected, redirecting to /dashboard')
           router.replace('/dashboard')
         }
       }
