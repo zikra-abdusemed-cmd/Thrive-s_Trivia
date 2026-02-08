@@ -43,26 +43,35 @@ export default function AuthLanding() {
       }
 
       if (data.user) {
-        // Try to get profile with timeout (single attempt)
-        const profilePromise = supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', data.user.id)
-          .single()
-        
-        const { data: profileData, error: profileError } = await Promise.race([
-          profilePromise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 3000))
-        ]).catch(() => ({ data: null, error: { message: 'Timeout' } }))
-        
-        // Default to dashboard if profile not found (profile might be created by trigger)
-        if (profileData?.role === 'admin') {
-          router.replace('/admin')
-        } else {
+        // Try to get profile - simplified without Promise.race
+        try {
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', data.user.id)
+            .single()
+          
+          // Default to dashboard if profile not found (profile might be created by trigger)
+          if (profileData?.role === 'admin') {
+            router.replace('/admin')
+          } else {
+            router.replace('/dashboard')
+          }
+        } catch (profileErr) {
+          // Ignore abort errors
+          if (profileErr.name === 'AbortError' || profileErr.message?.includes('aborted')) {
+            return
+          }
+          // If profile fetch fails, default to dashboard
+          console.warn('Profile fetch failed, defaulting to dashboard:', profileErr)
           router.replace('/dashboard')
         }
       }
     } catch (err) {
+      // Ignore abort errors - they're just from navigation/cleanup
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+        return
+      }
       setError(err.message || 'Login failed. Please try again.')
       console.error('Login error:', err)
     } finally {
@@ -90,6 +99,10 @@ export default function AuthLanding() {
       })
       
       if (signUpError) {
+        // Ignore abort errors
+        if (signUpError.name === 'AbortError' || signUpError.message?.includes('aborted')) {
+          return
+        }
         // Handle specific error messages
         if (signUpError.message.includes('rate limit') || signUpError.message.includes('Email rate limit')) {
           throw new Error('Email rate limit exceeded. Please wait a few minutes and try again, or disable email confirmation in Supabase settings.')
@@ -99,24 +112,32 @@ export default function AuthLanding() {
 
       if (data.user) {
         // Create profile
-        const { error: profileError } = await supabase.from('profiles').insert({
-          id: data.user.id,
-          email,
-          role: 'user',
-        })
-        
-        if (profileError) {
-          console.error('Profile creation error:', profileError)
-          // Continue anyway - profile might already exist or be created by trigger
+        try {
+          const { error: profileError } = await supabase.from('profiles').insert({
+            id: data.user.id,
+            email,
+            role: 'user',
+          })
+          
+          if (profileError) {
+            console.error('Profile creation error:', profileError)
+            // Continue anyway - profile might already exist or be created by trigger
+          }
+        } catch (profileErr) {
+          // Ignore abort errors
+          if (profileErr.name !== 'AbortError' && !profileErr.message?.includes('aborted')) {
+            console.error('Profile creation error:', profileErr)
+          }
         }
-        
-        // Wait a moment for profile to be created
-        await new Promise(resolve => setTimeout(resolve, 500))
         
         // New users are always regular users, so redirect to dashboard
         router.replace('/dashboard')
       }
     } catch (err) {
+      // Ignore abort errors - they're just from navigation/cleanup
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+        return
+      }
       setError(err.message || 'Signup failed. Please try again.')
     } finally {
       setLoading(false)

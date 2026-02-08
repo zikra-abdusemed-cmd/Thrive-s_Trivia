@@ -73,34 +73,24 @@ export default function Play() {
     if (!user) return
     
     try {
-      // Get all categories user has played (from scores table) with timeout
-      const scoresPromise = supabase
+      // Get all categories user has played (from scores table) - simplified
+      const { data: playedScores } = await supabase
         .from('scores')
         .select('category_id')
         .eq('user_id', user.id)
         .not('category_id', 'is', null)
       
-      const { data: playedScores } = await Promise.race([
-        scoresPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-      ]).catch(() => ({ data: [] }))
-      
       const playedCategoryIds = new Set(
-        (playedScores?.data || []).map(score => score.category_id)
+        (playedScores || []).map(score => score.category_id)
       )
       
-      // Filter out played categories with timeout
-      const categoriesPromise = supabase
+      // Get all categories
+      const { data: allCategories } = await supabase
         .from('categories')
         .select('*')
       
-      const { data: allCategories } = await Promise.race([
-        categoriesPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-      ]).catch(() => ({ data: [] }))
-      
-      if (allCategories?.data) {
-        const available = allCategories.data.filter(
+      if (allCategories) {
+        const available = allCategories.filter(
           cat => !playedCategoryIds.has(cat.id)
         )
         setAvailableCategories(available)
@@ -118,17 +108,18 @@ export default function Play() {
   useEffect(() => {
     if (!user) return
     
-    // Load all categories with timeout
-    Promise.race([
-      supabase.from('categories').select('*'),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-    ])
-      .then(({ data }) => {
+    // Load all categories - simplified without Promise.race
+    const loadCategories = async () => {
+      try {
+        const { data } = await supabase.from('categories').select('*')
         setCategories(data || [])
-      })
-      .catch(() => {
+      } catch (err) {
+        console.error('Error loading categories:', err)
         setCategories([])
-      })
+      }
+    }
+    
+    loadCategories()
     
     // Load categories user has already played
     loadPlayedCategories()
@@ -149,20 +140,40 @@ export default function Play() {
     setLoadingQuestions(true)
     setQuestionsError('')
     
-    // Load questions with timeout
-    Promise.race([
-      supabase.from('questions').select('*').eq('category_id', category),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-    ])
-      .then(({ data, error }) => {
+    // Load questions - simplified without Promise.race to avoid abort errors
+    const loadQuestions = async () => {
+      try {
+        console.log('Loading questions for category:', category)
+        
+        // Direct query without Promise.race to avoid abort errors
+        const { data, error } = await supabase
+          .from('questions')
+          .select('*')
+          .eq('category_id', category)
+        
+        console.log('Questions query result - error:', error)
+        console.log('Questions query result - data:', data)
+        console.log('Number of questions found:', data?.length || 0)
+        
         if (error) {
           console.error('Error loading questions:', error)
-          setQuestionsError('Failed to load questions. Please try again.')
+          setQuestionsError(`Failed to load questions: ${error.message || 'Unknown error'}`)
           setQuestions([])
           setLoadingQuestions(false)
           return
         }
-        const questionsData = data?.data || data || []
+        
+        // Supabase returns data directly as an array
+        const questionsData = data || []
+        
+        if (!Array.isArray(questionsData)) {
+          console.error('Questions data is not an array:', questionsData)
+          setQuestionsError('Invalid data format received')
+          setQuestions([])
+          setLoadingQuestions(false)
+          return
+        }
+        
         if (questionsData.length === 0) {
           console.warn('No questions found for category:', category)
           setQuestionsError('No questions available for this category yet. Please check back later!')
@@ -170,8 +181,10 @@ export default function Play() {
           setLoadingQuestions(false)
           return
         }
+        
         // Shuffle and take up to 5 questions
-        const shuffled = questionsData.sort(() => 0.5 - Math.random()).slice(0, 5)
+        const shuffled = [...questionsData].sort(() => 0.5 - Math.random()).slice(0, 5)
+        console.log('Shuffled questions (first 5):', shuffled.length)
         setQuestions(shuffled)
         setCurrentQuestionIndex(0)
         setDone(false)
@@ -180,13 +193,15 @@ export default function Play() {
         setTime(30)
         setLoadingQuestions(false)
         setQuestionsError('')
-      })
-      .catch((err) => {
-        console.error('Error loading questions:', err)
-        setQuestionsError('Failed to load questions. Please try again.')
+      } catch (err) {
+        console.error('Error loading questions (catch):', err)
+        setQuestionsError(`Failed to load questions: ${err.message || 'Please try again'}`)
         setQuestions([])
         setLoadingQuestions(false)
-      })
+      }
+    }
+    
+    loadQuestions()
   }, [category])
 
   // Reset timer when question changes
@@ -422,7 +437,10 @@ export default function Play() {
                   {availableCategories.map(c => (
                     <button
                       key={c.id}
-                      onClick={() => setCategory(c.id)}
+                      onClick={() => {
+                        console.log('Category selected:', c.id, c.name)
+                        setCategory(c.id)
+                      }}
                       className="category-button"
                     >
                       {c.name} ✨

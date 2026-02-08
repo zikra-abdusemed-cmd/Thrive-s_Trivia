@@ -37,24 +37,24 @@ export default function Admin() {
       
       setUser(user)
       
-      // Try to get profile with timeout (single attempt)
-      const profilePromise = supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single()
-      
-      const { data: profileData, error: profileError } = await Promise.race([
-        profilePromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 3000))
-      ]).catch(() => ({ data: null, error: { message: 'Timeout' } }))
-      
-      if (profileData?.role === 'admin') {
-        setUserRole('admin')
-        setLoading(false)
-        loadCategories()
-        loadQuestions()
-      } else {
+      // Get profile - simplified without Promise.race
+      try {
+        const { data: profileData } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .single()
+        
+        if (profileData?.role === 'admin') {
+          setUserRole('admin')
+          setLoading(false)
+          loadCategories()
+          loadQuestions()
+        } else {
+          router.replace('/dashboard')
+        }
+      } catch (profileErr) {
+        console.error('Profile fetch error:', profileErr)
         router.replace('/dashboard')
       }
     }
@@ -91,11 +91,8 @@ export default function Admin() {
 
   const loadCategories = async () => {
     try {
-      const { data } = await Promise.race([
-        supabase.from('categories').select('*'),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-      ])
-      setCategories(data?.data || data || [])
+      const { data } = await supabase.from('categories').select('*')
+      setCategories(data || [])
     } catch (err) {
       console.error('Error loading categories:', err)
       setCategories([])
@@ -104,16 +101,13 @@ export default function Admin() {
 
   const loadQuestions = async () => {
     try {
-      const { data } = await Promise.race([
-        supabase.from('questions').select(`
-          *,
-          categories (
-            name
-          )
-        `),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-      ])
-      setQuestions(data?.data || data || [])
+      const { data } = await supabase.from('questions').select(`
+        *,
+        categories (
+          name
+        )
+      `)
+      setQuestions(data || [])
     } catch (err) {
       console.error('Error loading questions:', err)
       setQuestions([])
@@ -127,10 +121,7 @@ export default function Admin() {
     }
     setOperationLoading(true)
     try {
-      const { data, error } = await Promise.race([
-        supabase.from('categories').insert({ name: newCategory.trim() }).select(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-      ])
+      const { data, error } = await supabase.from('categories').insert({ name: newCategory.trim() }).select()
       if (error) {
         setMessage({ type: 'error', text: error.message || 'Failed to create category' })
       } else {
@@ -158,10 +149,7 @@ export default function Admin() {
     }
     setOperationLoading(true)
     try {
-      const { error } = await Promise.race([
-        supabase.from('categories').update({ name: name.trim() }).eq('id', id),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-      ])
+      const { error } = await supabase.from('categories').update({ name: name.trim() }).eq('id', id)
       if (error) {
         setMessage({ type: 'error', text: error.message || 'Failed to update category' })
       } else {
@@ -182,10 +170,7 @@ export default function Admin() {
     if (confirm('Are you sure? This will also delete all questions in this category!')) {
       setOperationLoading(true)
       try {
-        const { error } = await Promise.race([
-          supabase.from('categories').delete().eq('id', id),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-        ])
+        const { error } = await supabase.from('categories').delete().eq('id', id)
         if (error) {
           setMessage({ type: 'error', text: error.message || 'Failed to delete category' })
         } else {
@@ -229,15 +214,12 @@ export default function Admin() {
         category_id: selectedCategory
       }
       
-      const { data, error } = await Promise.race([
-        supabase.from('questions').insert(questionData).select(`
-          *,
-          categories (
-            name
-          )
-        `),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-      ])
+      const { data, error } = await supabase.from('questions').insert(questionData).select(`
+        *,
+        categories (
+          name
+        )
+      `)
       
       if (error) {
         setMessage({ type: 'error', text: error.message || 'Failed to create question' })
@@ -279,18 +261,15 @@ export default function Admin() {
     }
     setOperationLoading(true)
     try {
-      const { error } = await Promise.race([
-        supabase.from('questions').update({
-          question: updatedQuestion.question.trim(),
-          option_a: updatedQuestion.option_a.trim(),
-          option_b: updatedQuestion.option_b.trim(),
-          option_c: updatedQuestion.option_c.trim(),
-          option_d: updatedQuestion.option_d.trim(),
-          correct: updatedQuestion.correct,
-          category_id: updatedQuestion.category_id
-        }).eq('id', id),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-      ])
+      const { error } = await supabase.from('questions').update({
+        question: updatedQuestion.question.trim(),
+        option_a: updatedQuestion.option_a.trim(),
+        option_b: updatedQuestion.option_b.trim(),
+        option_c: updatedQuestion.option_c.trim(),
+        option_d: updatedQuestion.option_d.trim(),
+        correct: updatedQuestion.correct,
+        category_id: updatedQuestion.category_id
+      }).eq('id', id)
       if (error) {
         setMessage({ type: 'error', text: error.message || 'Failed to update question' })
       } else {
@@ -325,10 +304,7 @@ export default function Admin() {
     if (confirm('Are you sure you want to delete this question?')) {
       setOperationLoading(true)
       try {
-        const { error } = await Promise.race([
-          supabase.from('questions').delete().eq('id', id),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
-        ])
+        const { error } = await supabase.from('questions').delete().eq('id', id)
         if (error) {
           setMessage({ type: 'error', text: error.message || 'Failed to delete question' })
         } else {

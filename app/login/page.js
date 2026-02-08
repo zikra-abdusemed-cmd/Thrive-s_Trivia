@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
+import Image from 'next/image'
 
 export default function Login() {
   const router = useRouter()
@@ -35,23 +36,30 @@ export default function Login() {
       }
 
       if (data.user) {
-        // Wait a moment for profile to be available
-        await new Promise(resolve => setTimeout(resolve, 300))
-        
-        // Check user role and redirect accordingly
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', data.user.id)
-          .single()
-        
-        if (profileData?.role === 'admin') {
-          router.replace('/admin')
-        } else {
+        // Check user role and redirect accordingly - simplified
+        try {
+          const { data: profileData } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', data.user.id)
+            .single()
+          
+          if (profileData?.role === 'admin') {
+            router.replace('/admin')
+          } else {
+            router.replace('/dashboard')
+          }
+        } catch (profileErr) {
+          // If profile fetch fails, default to dashboard
+          console.warn('Profile fetch failed, defaulting to dashboard:', profileErr)
           router.replace('/dashboard')
         }
       }
     } catch (err) {
+      // Ignore abort errors - they're just from navigation/cleanup
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+        return
+      }
       setError(err.message || 'Login failed. Please try again.')
       console.error('Login error:', err)
     } finally {
@@ -63,20 +71,28 @@ export default function Login() {
     <>
       <div className="auth-container">
         <form onSubmit={submit} className="auth-form">
+          <Image 
+            src="/logo.png" 
+            alt="Thrive Trivia" 
+            width={180} 
+            height={100} 
+            className="form-logo"
+            priority
+          />
           <h2 className="auth-title">Login 💜</h2>
+          {error && (
+            <div className="error-message">{error}</div>
+          )}
           <div className="input-group">
             <label className="input-label">Email</label>
             <input name="email" type="email" className="auth-input" placeholder="your@email.com" required />
           </div>
           <div className="input-group">
             <label className="input-label">Password</label>
-            <input name="password" type="password" className="auth-input" placeholder="********" required />
+            <input name="password" type="password" className="auth-input" placeholder="••••••••" required />
           </div>
-          {error && (
-            <div className="error-message">{error}</div>
-          )}
           <button type="submit" className="auth-button" disabled={loading}>
-            {loading ? 'Loading...' : 'Login ✨'}
+            {loading ? 'Logging in...' : 'Login ✨'}
           </button>
         </form>
       </div>
@@ -97,6 +113,27 @@ export default function Login() {
           border-radius: 24px;
           box-shadow: 0 8px 32px rgba(147, 51, 234, 0.2);
           animation: fadeInUp 0.6s ease-out;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+
+        .form-logo {
+          margin-bottom: 20px;
+          height: 100px;
+          width: auto;
+          object-fit: contain;
+        }
+
+        .error-message {
+          background: #fee2e2;
+          color: #dc2626;
+          padding: 12px 16px;
+          border-radius: 8px;
+          margin-bottom: 20px;
+          font-size: 0.9rem;
+          text-align: center;
+          width: 100%;
         }
 
         @keyframes fadeInUp {
@@ -153,7 +190,7 @@ export default function Login() {
         .auth-button {
           width: 100%;
           padding: 16px;
-          background-color:  #9333ea;
+          background: linear-gradient(135deg, #9333ea 0%, #ec4899 100%);
           color: #ffffff;
           border: none;
           border-radius: 12px;

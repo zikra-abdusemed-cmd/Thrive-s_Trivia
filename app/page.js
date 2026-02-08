@@ -14,10 +14,15 @@ export default function HomePage() {
       if (redirectingRef.current) return
       
       try {
-        const { data: { user }, error: authError } = await Promise.race([
-          supabase.auth.getUser(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Auth check timeout')), 5000))
-        ])
+        // Simplified - no Promise.race to avoid abort errors
+        const { data: { user }, error: authError } = await supabase.auth.getUser()
+        
+        // Ignore abort errors from auth
+        if (authError) {
+          if (authError.name === 'AbortError' || authError.message?.includes('aborted')) {
+            return
+          }
+        }
         
         if (authError || !user) {
           // No user logged in, show landing page
@@ -26,28 +31,36 @@ export default function HomePage() {
         
         redirectingRef.current = true
         
-        // Check user role with timeout
-        const profilePromise = supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .single()
-        
-        const { data, error: profileError } = await Promise.race([
-          profilePromise,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 3000))
-        ]).catch(() => ({ data: null, error: { message: 'Timeout' } }))
-        
-        // Only redirect if we have a valid role
-        if (data?.role === 'admin') {
-          router.replace('/admin')
-        } else if (data?.role === 'user') {
-          router.replace('/dashboard')
+        // Check user role - simplified without Promise.race
+        try {
+          const { data } = await supabase
+            .from('profiles')
+            .select('role')
+            .eq('id', user.id)
+            .single()
+          
+          // Only redirect if we have a valid role
+          if (data?.role === 'admin') {
+            router.replace('/admin')
+          } else if (data?.role === 'user') {
+            router.replace('/dashboard')
+          }
+          // If no profile found, stay on landing page (let user login/signup)
+        } catch (profileErr) {
+          // Ignore abort errors
+          if (profileErr.name === 'AbortError' || profileErr.message?.includes('aborted')) {
+            return
+          }
+          // If profile fetch fails, stay on landing page
+          console.warn('Profile fetch failed, staying on landing page:', profileErr)
         }
-        // If no profile found, stay on landing page (let user login/signup)
         
         redirectingRef.current = false
       } catch (err) {
+        // Ignore abort errors - they're just from navigation/cleanup
+        if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+          return
+        }
         console.error('Redirect check error:', err)
         redirectingRef.current = false
       }
@@ -71,7 +84,7 @@ export default function HomePage() {
       clearTimeout(timer)
       subscription.unsubscribe()
     }
-  }, [router]) // Add router back for proper navigation
+  }, [router])
 
   // Always show login/signup page as the landing page
   return <AuthLanding />

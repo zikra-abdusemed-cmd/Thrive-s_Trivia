@@ -1,26 +1,82 @@
 'use client'
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
+import Image from 'next/image'
 
 export default function Signup() {
+  const router = useRouter()
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
   const submit = async e => {
     e.preventDefault()
-    const email = e.target.email.value
-    const password = e.target.password.value
+    setError('')
+    setLoading(true)
+    
+    try {
+      const email = e.target.email.value.trim().toLowerCase()
+      const password = e.target.password.value
 
-    const { data } = await supabase.auth.signUp({ email, password })
+      const { data, error: signUpError } = await supabase.auth.signUp({ 
+        email, 
+        password,
+        options: {
+          emailRedirectTo: null,
+        }
+      })
+      
+      if (signUpError) {
+        if (signUpError.message.includes('rate limit') || signUpError.message.includes('Email rate limit')) {
+          throw new Error('Email rate limit exceeded. Please wait a few minutes and try again.')
+        }
+        throw signUpError
+      }
 
-    await supabase.from('profiles').insert({
-      id: data.user.id,
-      email,
-      role: 'user',
-    })
+      if (data.user) {
+        // Create profile
+        const { error: profileError } = await supabase.from('profiles').insert({
+          id: data.user.id,
+          email,
+          role: 'user',
+        })
+        
+        if (profileError) {
+          console.error('Profile creation error:', profileError)
+          // Continue anyway - profile might already exist or be created by trigger
+        }
+        
+        // Redirect to dashboard
+        router.replace('/dashboard')
+      }
+    } catch (err) {
+      // Ignore abort errors - they're just from navigation/cleanup
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+        return
+      }
+      setError(err.message || 'Signup failed. Please try again.')
+      console.error('Signup error:', err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
     <>
       <div className="auth-container">
         <form onSubmit={submit} className="auth-form">
+          <Image 
+            src="/logo.png" 
+            alt="Thrive Trivia" 
+            width={180} 
+            height={100} 
+            className="form-logo"
+            priority
+          />
           <h2 className="auth-title">Sign Up 💖</h2>
+          {error && (
+            <div className="error-message">{error}</div>
+          )}
           <div className="input-group">
             <label className="input-label">Email</label>
             <input name="email" type="email" className="auth-input" placeholder="your@email.com" required />
@@ -29,7 +85,9 @@ export default function Signup() {
             <label className="input-label">Password</label>
             <input name="password" type="password" className="auth-input" placeholder="••••••••" required />
           </div>
-          <button type="submit" className="auth-button">Sign Up ✨</button>
+          <button type="submit" className="auth-button" disabled={loading}>
+            {loading ? 'Signing up...' : 'Sign Up ✨'}
+          </button>
         </form>
       </div>
       <style jsx>{`
@@ -49,6 +107,27 @@ export default function Signup() {
           border-radius: 24px;
           box-shadow: 0 8px 32px rgba(147, 51, 234, 0.2);
           animation: fadeInUp 0.6s ease-out;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+        }
+
+        .form-logo {
+          margin-bottom: 20px;
+          height: 100px;
+          width: auto;
+          object-fit: contain;
+        }
+
+        .error-message {
+          background: #fee2e2;
+          color: #dc2626;
+          padding: 12px 16px;
+          border-radius: 8px;
+          margin-bottom: 20px;
+          font-size: 0.9rem;
+          text-align: center;
+          width: 100%;
         }
 
         @keyframes fadeInUp {
@@ -121,8 +200,13 @@ export default function Signup() {
           box-shadow: 0 6px 20px rgba(147, 51, 234, 0.4);
         }
 
-        .auth-button:active {
+        .auth-button:active:not(:disabled) {
           transform: translateY(0);
+        }
+
+        .auth-button:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
         }
       `}</style>
     </>
