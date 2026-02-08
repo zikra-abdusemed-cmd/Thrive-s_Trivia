@@ -90,18 +90,34 @@ export default function Admin() {
   }, [router])
 
   const loadCategories = async () => {
-    const { data } = await supabase.from('categories').select('*')
-    setCategories(data || [])
+    try {
+      const { data } = await Promise.race([
+        supabase.from('categories').select('*'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ])
+      setCategories(data?.data || data || [])
+    } catch (err) {
+      console.error('Error loading categories:', err)
+      setCategories([])
+    }
   }
 
   const loadQuestions = async () => {
-    const { data } = await supabase.from('questions').select(`
-      *,
-      categories (
-        name
-      )
-    `)
-    setQuestions(data || [])
+    try {
+      const { data } = await Promise.race([
+        supabase.from('questions').select(`
+          *,
+          categories (
+            name
+          )
+        `),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ])
+      setQuestions(data?.data || data || [])
+    } catch (err) {
+      console.error('Error loading questions:', err)
+      setQuestions([])
+    }
   }
 
   const addCategory = async () => {
@@ -110,16 +126,29 @@ export default function Admin() {
       return
     }
     setOperationLoading(true)
-    const { error } = await supabase.from('categories').insert({ name: newCategory.trim() })
-    if (error) {
-      setMessage({ type: 'error', text: error.message || 'Failed to create category' })
-    } else {
-      setMessage({ type: 'success', text: 'Category created successfully! ✨' })
-      setNewCategory('')
-      loadCategories()
+    try {
+      const { data, error } = await Promise.race([
+        supabase.from('categories').insert({ name: newCategory.trim() }).select(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ])
+      if (error) {
+        setMessage({ type: 'error', text: error.message || 'Failed to create category' })
+      } else {
+        setMessage({ type: 'success', text: 'Category created successfully! ✨' })
+        setNewCategory('')
+        // Optimistically add to state instead of reloading
+        if (data && data[0]) {
+          setCategories(prev => [...prev, data[0]])
+        } else {
+          loadCategories()
+        }
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message || 'Operation timed out. Please try again.' })
+    } finally {
+      setOperationLoading(false)
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000)
     }
-    setOperationLoading(false)
-    setTimeout(() => setMessage({ type: '', text: '' }), 3000)
   }
 
   const updateCategory = async (id, name) => {
@@ -128,31 +157,49 @@ export default function Admin() {
       return
     }
     setOperationLoading(true)
-    const { error } = await supabase.from('categories').update({ name: name.trim() }).eq('id', id)
-    if (error) {
-      setMessage({ type: 'error', text: error.message || 'Failed to update category' })
-    } else {
-      setMessage({ type: 'success', text: 'Category updated successfully! ✨' })
-      setEditingCategory(null)
-      loadCategories()
+    try {
+      const { error } = await Promise.race([
+        supabase.from('categories').update({ name: name.trim() }).eq('id', id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ])
+      if (error) {
+        setMessage({ type: 'error', text: error.message || 'Failed to update category' })
+      } else {
+        setMessage({ type: 'success', text: 'Category updated successfully! ✨' })
+        setEditingCategory(null)
+        // Optimistically update state
+        setCategories(prev => prev.map(cat => cat.id === id ? { ...cat, name: name.trim() } : cat))
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message || 'Operation timed out. Please try again.' })
+    } finally {
+      setOperationLoading(false)
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000)
     }
-    setOperationLoading(false)
-    setTimeout(() => setMessage({ type: '', text: '' }), 3000)
   }
 
   const deleteCategory = async (id) => {
     if (confirm('Are you sure? This will also delete all questions in this category!')) {
       setOperationLoading(true)
-      const { error } = await supabase.from('categories').delete().eq('id', id)
-      if (error) {
-        setMessage({ type: 'error', text: error.message || 'Failed to delete category' })
-      } else {
-        setMessage({ type: 'success', text: 'Category deleted successfully! ✨' })
-        loadCategories()
-        loadQuestions()
+      try {
+        const { error } = await Promise.race([
+          supabase.from('categories').delete().eq('id', id),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+        ])
+        if (error) {
+          setMessage({ type: 'error', text: error.message || 'Failed to delete category' })
+        } else {
+          setMessage({ type: 'success', text: 'Category deleted successfully! ✨' })
+          // Optimistically update state
+          setCategories(prev => prev.filter(cat => cat.id !== id))
+          setQuestions(prev => prev.filter(q => q.category_id !== id))
+        }
+      } catch (err) {
+        setMessage({ type: 'error', text: err.message || 'Operation timed out. Please try again.' })
+      } finally {
+        setOperationLoading(false)
+        setTimeout(() => setMessage({ type: '', text: '' }), 3000)
       }
-      setOperationLoading(false)
-      setTimeout(() => setMessage({ type: '', text: '' }), 3000)
     }
   }
 
@@ -171,32 +218,53 @@ export default function Admin() {
       return
     }
     setOperationLoading(true)
-    const { error } = await supabase.from('questions').insert({
-      question: newQuestion.question.trim(),
-      option_a: newQuestion.option_a.trim(),
-      option_b: newQuestion.option_b.trim(),
-      option_c: newQuestion.option_c.trim(),
-      option_d: newQuestion.option_d.trim(),
-      correct: newQuestion.correct,
-      category_id: selectedCategory
-    })
-    if (error) {
-      setMessage({ type: 'error', text: error.message || 'Failed to create question' })
-    } else {
-      setMessage({ type: 'success', text: 'Question created successfully! ✨' })
-      setNewQuestion({
-        question: '',
-        option_a: '',
-        option_b: '',
-        option_c: '',
-        option_d: '',
-        correct: 'a'
-      })
-      setSelectedCategory('')
-      loadQuestions()
+    try {
+      const questionData = {
+        question: newQuestion.question.trim(),
+        option_a: newQuestion.option_a.trim(),
+        option_b: newQuestion.option_b.trim(),
+        option_c: newQuestion.option_c.trim(),
+        option_d: newQuestion.option_d.trim(),
+        correct: newQuestion.correct,
+        category_id: selectedCategory
+      }
+      
+      const { data, error } = await Promise.race([
+        supabase.from('questions').insert(questionData).select(`
+          *,
+          categories (
+            name
+          )
+        `),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ])
+      
+      if (error) {
+        setMessage({ type: 'error', text: error.message || 'Failed to create question' })
+      } else {
+        setMessage({ type: 'success', text: 'Question created successfully! ✨' })
+        // Optimistically add to state instead of reloading
+        if (data && data[0]) {
+          setQuestions(prev => [...prev, data[0]])
+        } else {
+          loadQuestions()
+        }
+        setNewQuestion({
+          question: '',
+          option_a: '',
+          option_b: '',
+          option_c: '',
+          option_d: '',
+          correct: 'a'
+        })
+        setSelectedCategory('')
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message || 'Operation timed out. Please try again.' })
+    } finally {
+      setOperationLoading(false)
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000)
     }
-    setOperationLoading(false)
-    setTimeout(() => setMessage({ type: '', text: '' }), 3000)
   }
 
   const updateQuestion = async (id, updatedQuestion) => {
@@ -210,38 +278,70 @@ export default function Admin() {
       return
     }
     setOperationLoading(true)
-    const { error } = await supabase.from('questions').update({
-      question: updatedQuestion.question.trim(),
-      option_a: updatedQuestion.option_a.trim(),
-      option_b: updatedQuestion.option_b.trim(),
-      option_c: updatedQuestion.option_c.trim(),
-      option_d: updatedQuestion.option_d.trim(),
-      correct: updatedQuestion.correct,
-      category_id: updatedQuestion.category_id
-    }).eq('id', id)
-    if (error) {
-      setMessage({ type: 'error', text: error.message || 'Failed to update question' })
-    } else {
-      setMessage({ type: 'success', text: 'Question updated successfully! ✨' })
-      setEditingQuestion(null)
-      loadQuestions()
+    try {
+      const { error } = await Promise.race([
+        supabase.from('questions').update({
+          question: updatedQuestion.question.trim(),
+          option_a: updatedQuestion.option_a.trim(),
+          option_b: updatedQuestion.option_b.trim(),
+          option_c: updatedQuestion.option_c.trim(),
+          option_d: updatedQuestion.option_d.trim(),
+          correct: updatedQuestion.correct,
+          category_id: updatedQuestion.category_id
+        }).eq('id', id),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+      ])
+      if (error) {
+        setMessage({ type: 'error', text: error.message || 'Failed to update question' })
+      } else {
+        setMessage({ type: 'success', text: 'Question updated successfully! ✨' })
+        setEditingQuestion(null)
+        // Optimistically update state
+        setQuestions(prev => prev.map(q => {
+          if (q.id === id) {
+            return {
+              ...q,
+              question: updatedQuestion.question.trim(),
+              option_a: updatedQuestion.option_a.trim(),
+              option_b: updatedQuestion.option_b.trim(),
+              option_c: updatedQuestion.option_c.trim(),
+              option_d: updatedQuestion.option_d.trim(),
+              correct: updatedQuestion.correct,
+              category_id: updatedQuestion.category_id
+            }
+          }
+          return q
+        }))
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: err.message || 'Operation timed out. Please try again.' })
+    } finally {
+      setOperationLoading(false)
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000)
     }
-    setOperationLoading(false)
-    setTimeout(() => setMessage({ type: '', text: '' }), 3000)
   }
 
   const deleteQuestion = async (id) => {
     if (confirm('Are you sure you want to delete this question?')) {
       setOperationLoading(true)
-      const { error } = await supabase.from('questions').delete().eq('id', id)
-      if (error) {
-        setMessage({ type: 'error', text: error.message || 'Failed to delete question' })
-      } else {
-        setMessage({ type: 'success', text: 'Question deleted successfully! ✨' })
-        loadQuestions()
+      try {
+        const { error } = await Promise.race([
+          supabase.from('questions').delete().eq('id', id),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+        ])
+        if (error) {
+          setMessage({ type: 'error', text: error.message || 'Failed to delete question' })
+        } else {
+          setMessage({ type: 'success', text: 'Question deleted successfully! ✨' })
+          // Optimistically update state
+          setQuestions(prev => prev.filter(q => q.id !== id))
+        }
+      } catch (err) {
+        setMessage({ type: 'error', text: err.message || 'Operation timed out. Please try again.' })
+      } finally {
+        setOperationLoading(false)
+        setTimeout(() => setMessage({ type: '', text: '' }), 3000)
       }
-      setOperationLoading(false)
-      setTimeout(() => setMessage({ type: '', text: '' }), 3000)
     }
   }
 
