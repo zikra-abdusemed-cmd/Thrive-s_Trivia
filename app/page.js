@@ -20,6 +20,7 @@ export default function HomePage() {
         ])
         
         if (authError || !user) {
+          // No user logged in, show landing page
           return
         }
         
@@ -37,14 +38,13 @@ export default function HomePage() {
           new Promise((_, reject) => setTimeout(() => reject(new Error('Profile fetch timeout')), 3000))
         ]).catch(() => ({ data: null, error: { message: 'Timeout' } }))
         
+        // Only redirect if we have a valid role
         if (data?.role === 'admin') {
           router.replace('/admin')
         } else if (data?.role === 'user') {
           router.replace('/dashboard')
-        } else {
-          // If no profile, redirect to dashboard as default (profile might be created by trigger)
-          router.replace('/dashboard')
         }
+        // If no profile found, stay on landing page (let user login/signup)
         
         redirectingRef.current = false
       } catch (err) {
@@ -53,7 +53,10 @@ export default function HomePage() {
       }
     }
 
-    checkAndRedirect()
+    // Small delay to prevent flash of content
+    const timer = setTimeout(() => {
+      checkAndRedirect()
+    }, 100)
 
     // Listen for auth state changes (only for logout)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -64,8 +67,11 @@ export default function HomePage() {
       // Don't redirect on SIGNED_IN - let the login/signup handlers do it
     })
 
-    return () => subscription.unsubscribe()
-  }, []) // Remove router dependency to prevent re-runs
+    return () => {
+      clearTimeout(timer)
+      subscription.unsubscribe()
+    }
+  }, [router]) // Add router back for proper navigation
 
   // Always show login/signup page as the landing page
   return <AuthLanding />

@@ -19,6 +19,8 @@ export default function Play() {
   const [userRole, setUserRole] = useState(null)
   const [loading, setLoading] = useState(true)
   const [answered, setAnswered] = useState(false)
+  const [loadingQuestions, setLoadingQuestions] = useState(false)
+  const [questionsError, setQuestionsError] = useState('')
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
@@ -134,12 +136,56 @@ export default function Play() {
   }, [user])
 
   useEffect(() => {
-    if (!category) return
-    supabase.from('questions')
-      .select('*')
-      .eq('category_id', category)
-      .then(({ data }) => {
-        setQuestions(data.sort(() => 0.5 - Math.random()).slice(0, 5))
+    if (!category) {
+      setQuestions([])
+      setCurrentQuestionIndex(0)
+      setDone(false)
+      setScore(0)
+      setQuestionsError('')
+      setLoadingQuestions(false)
+      return
+    }
+    
+    setLoadingQuestions(true)
+    setQuestionsError('')
+    
+    // Load questions with timeout
+    Promise.race([
+      supabase.from('questions').select('*').eq('category_id', category),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+    ])
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('Error loading questions:', error)
+          setQuestionsError('Failed to load questions. Please try again.')
+          setQuestions([])
+          setLoadingQuestions(false)
+          return
+        }
+        const questionsData = data?.data || data || []
+        if (questionsData.length === 0) {
+          console.warn('No questions found for category:', category)
+          setQuestionsError('No questions available for this category yet. Please check back later!')
+          setQuestions([])
+          setLoadingQuestions(false)
+          return
+        }
+        // Shuffle and take up to 5 questions
+        const shuffled = questionsData.sort(() => 0.5 - Math.random()).slice(0, 5)
+        setQuestions(shuffled)
+        setCurrentQuestionIndex(0)
+        setDone(false)
+        setScore(0)
+        setAnswered(false)
+        setTime(30)
+        setLoadingQuestions(false)
+        setQuestionsError('')
+      })
+      .catch((err) => {
+        console.error('Error loading questions:', err)
+        setQuestionsError('Failed to load questions. Please try again.')
+        setQuestions([])
+        setLoadingQuestions(false)
       })
   }, [category])
 
@@ -231,9 +277,27 @@ export default function Play() {
 
   if (loading) {
     return (
-      <div className="loading-container">
-        <div className="loading-spinner">✨</div>
-      </div>
+      <>
+        <div className="loading-container">
+          <div className="loading-spinner">✨</div>
+        </div>
+        <style jsx>{`
+          .loading-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: calc(100vh - 200px);
+          }
+          .loading-spinner {
+            font-size: 3rem;
+            animation: spin 1s linear infinite;
+          }
+          @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </>
     )
   }
 
@@ -367,6 +431,22 @@ export default function Play() {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {category && loadingQuestions && (
+          <div className="loading-questions">
+            <div className="loading-spinner">✨</div>
+            <p>Loading questions...</p>
+          </div>
+        )}
+
+        {category && !loadingQuestions && questionsError && (
+          <div className="questions-error">
+            <p>{questionsError}</p>
+            <button onClick={() => setCategory(null)} className="back-button">
+              Go Back
+            </button>
           </div>
         )}
 
@@ -533,6 +613,55 @@ export default function Play() {
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
+        }
+
+        .loading-questions {
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          align-items: center;
+          min-height: 300px;
+          padding: 40px;
+        }
+
+        .loading-questions p {
+          margin-top: 20px;
+          font-size: 1.1rem;
+          color: #9333ea;
+          font-weight: 600;
+        }
+
+        .questions-error {
+          text-align: center;
+          padding: 40px;
+          background: linear-gradient(135deg, #fee2e2 0%, #fce7f3 100%);
+          border-radius: 16px;
+          margin: 20px 0;
+        }
+
+        .questions-error p {
+          font-size: 1.1rem;
+          color: #dc2626;
+          font-weight: 600;
+          margin-bottom: 20px;
+        }
+
+        .back-button {
+          padding: 12px 24px;
+          background: linear-gradient(135deg, #9333ea 0%, #ec4899 100%);
+          color: #ffffff;
+          border: none;
+          border-radius: 12px;
+          font-size: 1rem;
+          font-weight: 700;
+          cursor: pointer;
+          transition: transform 0.3s ease, box-shadow 0.3s ease;
+          box-shadow: 0 4px 12px rgba(147, 51, 234, 0.3);
+        }
+
+        .back-button:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(147, 51, 234, 0.4);
         }
       `}</style>
     </>
