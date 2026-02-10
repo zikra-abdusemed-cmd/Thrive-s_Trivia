@@ -73,7 +73,7 @@ export default function Play() {
     if (!user) return
     
     try {
-      // Get all categories user has played (from scores table) - simplified
+      // Get all categories user has played (from scores table)
       const { data: playedScores } = await supabase
         .from('scores')
         .select('category_id')
@@ -94,6 +94,19 @@ export default function Play() {
           cat => !playedCategoryIds.has(cat.id)
         )
         setAvailableCategories(available)
+      }
+
+      // Also load the user's most recent score so we can show it
+      // in the header when there is no active game.
+      const { data: lastScoreData } = await supabase
+        .from('scores')
+        .select('score, total_questions, created_at')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+
+      if (!category && lastScoreData && lastScoreData.length > 0) {
+        setScore(lastScoreData[0].score || 0)
       }
     } catch (err) {
       console.error('Error loading played categories:', err)
