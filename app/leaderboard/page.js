@@ -33,8 +33,45 @@ export default function Leaderboard() {
 
   useEffect(() => {
     if (!user) return
-    supabase.from('scores').select('*').order('score', { ascending: false })
-      .then(({ data }) => setScores(data))
+
+    // Aggregate scores per user so each player appears once on the leaderboard
+    supabase
+      .from('scores')
+      .select('user_id, user_email, score')
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('Error loading leaderboard scores:', error)
+          setScores([])
+          return
+        }
+
+        if (!data) {
+          setScores([])
+          return
+        }
+
+        // Sum scores per user
+        const totalsMap = new Map()
+        data.forEach((row) => {
+          if (!row.user_id) return
+          const existing = totalsMap.get(row.user_id) || {
+            user_id: row.user_id,
+            user_email: row.user_email,
+            total_score: 0,
+          }
+          existing.total_score += row.score || 0
+          if (!existing.user_email && row.user_email) {
+            existing.user_email = row.user_email
+          }
+          totalsMap.set(row.user_id, existing)
+        })
+
+        const totalsArray = Array.from(totalsMap.values()).sort(
+          (a, b) => b.total_score - a.total_score
+        )
+
+        setScores(totalsArray)
+      })
   }, [user])
 
   if (loading) {
@@ -58,7 +95,7 @@ export default function Leaderboard() {
             </div>
           ) : (
             scores.map((s, index) => (
-              <div key={s.id} className={`leaderboard-item ${index < 3 ? 'top-three' : ''}`}>
+              <div key={s.user_id} className={`leaderboard-item ${index < 3 ? 'top-three' : ''}`}>
                 <div className="rank-badge">
                   {index === 0 && '🥇'}
                   {index === 1 && '🥈'}
@@ -66,7 +103,7 @@ export default function Leaderboard() {
                   {index > 2 && `#${index + 1}`}
                 </div>
                 <div className="score-info">
-                  <span className="score-value">{s.score}</span>
+                  <span className="score-value">{s.total_score}</span>
                   {s.user_email && (
                     <span className="user-email">{s.user_email}</span>
                   )}
