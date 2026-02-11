@@ -196,7 +196,7 @@ export default function Play() {
         }
         
         // Shuffle and take up to 5 questions
-        const shuffled = [...questionsData].sort(() => 0.5 - Math.random()).slice(0, 5)
+        const shuffled = [...questionsData].sort(() => 0.5 - Math.random())
         console.log('Shuffled questions (first 5):', shuffled.length)
         setQuestions(shuffled)
         setCurrentQuestionIndex(0)
